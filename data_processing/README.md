@@ -25,6 +25,7 @@ The `scripts/` folder contains all Python processing scripts:
   - `process_tiktok_ads_simple.py`
   - `process_tiktok_ads_structured.py`
   - `process_tiktok_ads_zero_loss.py`
+- **TikTok Organic Processing**: `process_tiktok_organic.py`
 - **Organic Social Processing**: `process_organic_social.py`
 - **Power BI Processing**: `process_powerbi.py`
 - **Environment Checker**: `check_env.py`
@@ -40,6 +41,7 @@ The `sql/` folder contains all database setup scripts:
 - `setup_supabase_structured.sql` - Structured schema
 - `setup_supabase_enhanced.sql` - Enhanced schema
 - `setup_supabase_tiktok.sql` - TikTok ads schema
+- `setup_tiktok_organic.sql` - TikTok organic schema
 
 ## Tests
 
@@ -52,6 +54,7 @@ The `tests/` folder contains test scripts to validate your setup:
 - `test_setup_powerbi.py` - Power BI tests
 - `test_setup_tiktok_simple.py` - TikTok simple tests
 - `test_setup_tiktok_structured.py` - TikTok structured tests
+- `test_setup_tiktok_organic.py` - TikTok organic tests
 
 ## Documentation
 
@@ -72,6 +75,9 @@ The `docs/` folder contains detailed guides and documentation:
 - `POWERBI_SETUP_GUIDE.md` - Power BI setup guide
 - `POWERBI_QUICKSTART.md` - Power BI quick start
 - `TIKTOK_SETUP_GUIDE.md` - TikTok Ads setup guide
+- `TIKTOK_ORGANIC_README.md` - TikTok Organic documentation
+- `TIKTOK_ORGANIC_SETUP_GUIDE.md` - TikTok Organic setup guide
+- `TIKTOK_ORGANIC_IMPLEMENTATION_SUMMARY.md` - TikTok Organic implementation details
 
 ### Technical Documentation
 - `PROJECT_STRUCTURE.md` - Overall project structure
