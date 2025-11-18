@@ -1,0 +1,263 @@
+{
+  "name": "Marketing Analytics AI - Gemini Simple",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "marketing-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "marketing-chat"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $credentials.googleApiKey }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"role\": \"user\",\n    \"parts\": [{\n      \"text\": \"You are an expert SQL query generator for a marketing analytics database.\\n\\nDATABASE SCHEMA:\\n\\nTable: google_ads_documents\\nColumns:\\n- id (bigint)\\n- content (text)\\n- metadata (jsonb) - Contains: day, campaign, cost, clicks, impressions, ctr, conversions, conversion_rate\\n- raw_data (jsonb)\\n- embedding (vector)\\n- created_at (timestamp)\\n\\nOther tables: tiktok_ads_documents, meta_ads_documents, powerbi_documents, organic_social_documents (same structure)\\n\\nHOW TO QUERY METADATA (JSONB):\\n- Access field: metadata->>'field_name'\\n- Cast to float: (metadata->>'cost')::float\\n- Cast to integer: (metadata->>'clicks')::integer\\n- Filter: WHERE metadata->>'day' >= '2024-11-01'\\n- Group: GROUP BY metadata->>'campaign'\\n\\nIMPORTANT RULES:\\n1. ALWAYS use LIMIT (max 1000)\\n2. Use metadata for all queries\\n3. Always cast numeric fields before aggregation\\n4. Generate ONLY the SQL query, nothing else\\n5. NO markdown, NO explanations\\n\\nEXAMPLES:\\n\\nQ: Total spend?\\nA: SELECT SUM((metadata->>'cost')::float) as total_spend FROM google_ads_documents\\n\\nQ: Top 5 campaigns by clicks\\nA: SELECT metadata->>'campaign' as campaign, SUM((metadata->>'clicks')::integer) as total_clicks FROM google_ads_documents GROUP BY metadata->>'campaign' ORDER BY total_clicks DESC LIMIT 5\\n\\nQ: Average CTR in November 2024?\\nA: SELECT AVG((metadata->>'ctr')::float) as avg_ctr FROM google_ads_documents WHERE metadata->>'day' >= '2024-11-01' AND metadata->>'day' < '2024-12-01'\\n\\nNow generate SQL for: {{ $json.body.question }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 1000\n  }\n}",
+        "options": {}
+      },
+      "id": "http-gemini-sql",
+      "name": "Gemini Generate SQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "googleApiKey": {
+          "id": "1",
+          "name": "Google API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract and validate SQL from Gemini\nconst response = $input.first().json;\nconst question = $('Webhook').first().json.body.question;\n\nlet sql = '';\nif (response.candidates && response.candidates[0]) {\n  const parts = response.candidates[0].content.parts;\n  if (parts && parts[0]) {\n    sql = parts[0].text;\n  }\n}\n\nif (!sql) {\n  throw new Error('No SQL generated');\n}\n\n// Clean SQL\nsql = sql\n  .replace(/```sql\\n?/gi, '')\n  .replace(/```\\n?/g, '')\n  .trim();\n\n// Security checks\nconst dangerous = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE'];\nconst upper = sql.toUpperCase();\n\nfor (const keyword of dangerous) {\n  if (upper.includes(keyword)) {\n    throw new Error(`Unsafe SQL: ${keyword}`);\n  }\n}\n\nif (!upper.startsWith('SELECT')) {\n  throw new Error('Only SELECT allowed');\n}\n\nif (!upper.includes('LIMIT')) {\n  sql += ' LIMIT 100';\n}\n\nreturn {\n  json: {\n    sql: sql,\n    question: question,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "validate-sql",
+      "name": "Validate SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook').first().json.supabaseUrl }}/rest/v1/rpc/execute_sql",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Webhook').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"{{ $json.sql }}\"\n}",
+        "options": {}
+      },
+      "id": "http-supabase",
+      "name": "Execute Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Format results\nconst results = $input.first().json;\nconst sqlData = $('Validate SQL').first().json;\n\nlet data = 'No data';\nlet count = 0;\n\nif (Array.isArray(results)) {\n  count = results.length;\n  data = JSON.stringify(results.slice(0, 20), null, 2);\n  if (count > 20) {\n    data += `\\n\\n[...${count - 20} more rows]`;\n  }\n} else if (results && typeof results === 'object') {\n  count = 1;\n  data = JSON.stringify(results, null, 2);\n}\n\nreturn {\n  json: {\n    question: sqlData.question,\n    sql: sqlData.sql,\n    data: data,\n    count: count\n  }\n};"
+      },
+      "id": "format-results",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $credentials.googleApiKey }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"role\": \"user\",\n    \"parts\": [{\n      \"text\": \"You are a helpful marketing analytics assistant.\\n\\nGUIDELINES:\\n1. Answer directly and concisely\\n2. Highlight key insights\\n3. Format numbers: $ for costs, % for rates, commas for thousands\\n4. Use bullet points\\n5. Be conversational but professional\\n\\nUser Question: {{ $json.question }}\\n\\nDatabase Results ({{ $json.count }} rows):\\n{{ $json.data }}\\n\\nProvide a clear, insightful answer.\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"maxOutputTokens\": 2000\n  }\n}",
+        "options": {}
+      },
+      "id": "http-gemini-answer",
+      "name": "Gemini Generate Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300],
+      "credentials": {
+        "googleApiKey": {
+          "id": "1",
+          "name": "Google API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract final answer\nconst response = $input.first().json;\nconst formatted = $('Format Results').first().json;\n\nlet answer = 'Unable to generate answer';\nif (response.candidates && response.candidates[0]) {\n  const parts = response.candidates[0].content.parts;\n  if (parts && parts[0]) {\n    answer = parts[0].text;\n  }\n}\n\nreturn {\n  json: {\n    success: true,\n    question: formatted.question,\n    answer: answer,\n    metadata: {\n      rows_analyzed: formatted.count,\n      sql_executed: formatted.sql,\n      timestamp: $('Validate SQL').first().json.timestamp\n    }\n  }\n};"
+      },
+      "id": "extract-answer",
+      "name": "Extract Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Generate SQL": {
+      "main": [
+        [
+          {
+            "node": "Validate SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate SQL": {
+      "main": [
+        [
+          {
+            "node": "Execute Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Query": {
+      "main": [
+        [
+          {
+            "node": "Format Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Results": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Generate Answer": {
+      "main": [
+        [
+          {
+            "node": "Extract Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Answer": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2024-11-17T00:00:00.000Z",
+  "versionId": "1"
+}
+

@@ -1,0 +1,119 @@
+{
+  "name": "Step 1 - Generate SQL Only",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "step1-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "step1-test"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "PUT_YOUR_GOOGLE_API_KEY_HERE"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"role\": \"user\",\n    \"parts\": [{\n      \"text\": \"You are an expert SQL query generator. Return JSON with sql and prompt properties.\\n\\nDATABASE SCHEMA:\\n\\nTABLE: google_ads_documents (JSONB ARRAY)\\n- Access: ((metadata::jsonb->>0)::jsonb)->>'field'\\n- Fields: day, campaign, cost, clicks, impressions, ctr, conversions\\n\\nTABLE: tiktok_ads_performance (Structured)\\n- Direct: campaign_name, cost, clicks, video_views\\n\\nTABLE: meta_ads_performance (Structured)\\n- Direct: campaign_name, amount_spent, link_clicks\\n\\nTABLE: organic_social_media (Structured)\\n- Direct: post_id, views, likes, shares\\n\\nTABLE: powerbi_sales (Structured)\\n- Direct: store_name, total_sales\\n\\nRULES:\\n1. Return ONLY valid JSON: {\\\"sql\\\": \\\"...\\\", \\\"prompt\\\": \\\"...\\\"}\\n2. TWO MODES:\\n   - No data needed (greetings, help): sql=\\\"\\\", prompt=DIRECT ANSWER to user\\n   - Data needed: sql=query (NO semicolon!), prompt=instructions for next LLM\\n3. Only add LIMIT if user says \\\"top N\\\" or \\\"first N\\\"\\n4. JSONB: ((metadata::jsonb->>0)::jsonb)->>'field'\\n5. For aggregations don't use LIMIT\\n6. DO NOT end SQL with semicolon\\n\\nEXAMPLES:\\n\\nQ: Hello\\nA: {\\\"sql\\\": \\\"\\\", \\\"prompt\\\": \\\"Hello! I'm your marketing analytics assistant. What would you like to know?\\\"}\\n\\nQ: Total Google spend?\\nA: {\\\"sql\\\": \\\"SELECT SUM((((metadata::jsonb->>0)::jsonb)->>'cost')::float) as total_spend FROM google_ads_documents\\\", \\\"prompt\\\": \\\"Present total as currency.\\\"}\\n\\nQ: Top 5 campaigns\\nA: {\\\"sql\\\": \\\"SELECT ((metadata::jsonb->>0)::jsonb)->>'campaign' as campaign, SUM((((metadata::jsonb->>0)::jsonb)->>'clicks')::integer) as clicks FROM google_ads_documents GROUP BY ((metadata::jsonb->>0)::jsonb)->>'campaign' ORDER BY clicks DESC LIMIT 5\\\", \\\"prompt\\\": \\\"List top 5.\\\"}\\n\\nQ: Compare platforms\\nA: {\\\"sql\\\": \\\"SELECT 'Google' as platform, SUM((((metadata::jsonb->>0)::jsonb)->>'cost')::float) as spend FROM google_ads_documents UNION ALL SELECT 'TikTok', SUM(cost) FROM tiktok_ads_performance\\\", \\\"prompt\\\": \\\"Compare spending.\\\"}\\n\\nNow generate JSON for: {{ $json.body.question }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 500\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-1",
+      "name": "Gemini Generate SQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract SQL and prompt from Gemini response\nconst response = $input.first().json;\nconst question = $('Webhook').first().json.body.question;\n\nlet responseText = '';\n\n// Extract text from Gemini response\nif (response.candidates && response.candidates[0]) {\n  const parts = response.candidates[0].content.parts;\n  if (parts && parts[0]) {\n    responseText = parts[0].text;\n  }\n}\n\nif (!responseText) {\n  throw new Error('No response from Gemini');\n}\n\n// Clean response (remove markdown if present)\nresponseText = responseText\n  .replace(/```json\\n?/gi, '')\n  .replace(/```\\n?/g, '')\n  .trim();\n\n// Parse JSON\nlet parsedResponse;\ntry {\n  parsedResponse = JSON.parse(responseText);\n} catch (error) {\n  throw new Error('Gemini did not return valid JSON: ' + responseText);\n}\n\n// Validate required fields (sql can be empty string)\nif (!parsedResponse.hasOwnProperty('sql')) {\n  throw new Error('Missing \"sql\" property in response');\n}\nif (!parsedResponse.prompt) {\n  throw new Error('Missing \"prompt\" property in response');\n}\n\n// Clean SQL - remove trailing semicolon if present\nlet cleanedSql = parsedResponse.sql;\nif (cleanedSql && typeof cleanedSql === 'string') {\n  cleanedSql = cleanedSql.trim().replace(/;+$/, '');\n}\n\n// Check if database query is needed\nconst needsDatabase = cleanedSql !== \"\" && cleanedSql !== null;\n\nreturn {\n  json: {\n    success: true,\n    question: question,\n    sql: cleanedSql,\n    prompt: parsedResponse.prompt,\n    needs_database: needsDatabase,\n    raw_gemini_response: response\n  }\n};"
+      },
+      "id": "extract-1",
+      "name": "Extract SQL and Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {}
+      },
+      "id": "respond-1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Generate SQL": {
+      "main": [
+        [
+          {
+            "node": "Extract SQL and Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract SQL and Prompt": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2024-11-17T00:00:00.000Z",
+  "versionId": "1"
+}
